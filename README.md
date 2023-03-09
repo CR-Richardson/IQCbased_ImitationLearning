@@ -24,6 +24,8 @@ To plot the computed ROA, two more packages are required:
 * [Multipoly](https://dept.aem.umn.edu/~AerospaceControl/): Package used to represent multivariate polynomials
 
 ### Way of Using the Code
-* To start the safe imitation learing process run `NN_policy.py`. The computation results are stored in the folder **data**. 
-* To visualize the results for the inverted pendulum example, run `result_analysis.m`.
-* To compare the results using two different neural network controllers, run `result_analysis_ROA.m`.
+* To start the safe imitation learing process run `NN_policy.py`. The number of iterations, gradient descent steps, network size, and other parameters are defined in the main function.
+* The computation results are stored in the folder **data**. 
+* To visualize the results, run `result_analysis.m`. 
+* To visualize a comparison between two different neural network controllers, run `result_analysis_ROA.m`.
+* In both visualisations, the directories of the results, iteration numbers and legend labels can be modified at the top of the scripts.
