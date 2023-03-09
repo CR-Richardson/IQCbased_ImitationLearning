@@ -29,4 +29,4 @@ To plot the computed ROA, three more packages are required:
 * The computation results are stored in the folder **data**. 
 * To visualize the results, run `result_analysis.m`. 
 * To visualize a comparison between two different neural network controllers, run `result_analysis_ROA.m`.
-* In both visualisations, the directories of the results, iteration numbers and legend labels can be modified at the top of the scripts.
+* In both visualisation files, the directories of the results, iteration numbers and legend labels can be modified at the top of the scripts.
