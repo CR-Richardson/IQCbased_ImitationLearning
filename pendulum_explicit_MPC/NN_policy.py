@@ -445,7 +445,6 @@ def main():
     param["x2bound"] = matlab.double([x2bound])
     param["x_eq"] = matlab.double(x_eq)
     param["n_iter"] = matlab.int32(n_iter)
-    param["QC_type"] = "CSB" # The type of QC used. Must be 'RA' or 'CSB'
 
     for i in range(n_iter):
         print(logz.colorize("safe learning iteration" + str(i), 'green', bold=True))

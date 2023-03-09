@@ -1,5 +1,6 @@
 % Region of attraction analysis on the pendulum system with NN controller
 % Modified: 09/03/23 - CRR - Modified code to allow arbitrary choice of NN depth and width.
+% Modified: 09/03/23 - CRR - Modified how weights and parameters are saved for results analysis.
 function dec_var = solve_sdp(param)
 
 % convert struct to map and define system parameters
@@ -157,57 +158,14 @@ cvx_begin sdp
     
     % Variables
     variable Q1(nG,nG) symmetric;
+    variable Q2(nphi,nphi) diagonal;
     variable L1(nu, nG); % L1 = \tilde{Nux}*Q1;
     variable L2(nu, nphi); % L2 = \tilde{Nuw}*Q2;
     variable L3(nphi, nG); % L3 = \tilde{Nvx}*Q1;
     variable L4(nphi, nphi); % L4 = \tilde{Nvw}*Q2;
     
     Q1 >= 1e-8*eye(nG);    
-    
-    % conditions on Q2 dependent on choice of QC
-    if QC_type == "CSB"
-        variable Q2(nphi,nphi) diagonal;
-        Q2 >= 1e-8*eye(nphi);
-    elseif QC_type == "RA"
-        %% Constraints on Q2 - strictly ultrametric matrix (Varga)
-        variable Q2(nphi,nphi) symmetric; % changed to implement the repeated nonlinearities constraint!
-    
-        % property i (symmetry of Q2 automatically imposed)
-        for i=1:size(Q2,1)
-            for j=i:size(Q2,1)
-                Q2(i,j)>=0.001;
-            end
-        end
-        disp("MATLAB: CALCULATED CONSTRAINT i ON Q2")
-        
-        % property iii
-        for i=1:size(Q2,1)
-            for j=1:size(Q2,1)
-                if i~=j
-                    Q2(i,i)>=1.001*Q2(i,j);
-                end
-            end
-        end
-        disp("MATLAB: CALCULATED CONSTRAINT iii ON Q2")
-    
-        % property ii - these constraints are really slow to compute
-        for i=1:size(Q2,1) %  avoids diagonal elements and repeated constraints due to symmetry
-            for j=i+1:size(Q2,1)
-                for k=1:size(Q2,1)
-                    if k~=i & k~=j
-                        Q2(i,j)>=Q2(i,k);
-                        Q2(i,j)>=Q2(j,k);
-                    end
-                end
-            end
-        end
-    else
-        msg = 'QC_type must be CSB or RA';
-        error(msg);
-    end
-
-    disp("MATLAB: CALCULATED CONSTRAINTS ON Q2")
-    %% Continuing optimisation - Remainder of code remains unchanged!
+    Q2 >= 1e-8*eye(nphi);
 
     L = [L1, L2;...
      L3, L4];
@@ -253,9 +211,6 @@ cvx_begin sdp
     obj = obj1 + obj2 + obj3;
     minimize(obj)
 cvx_end
-
-% Check properties of Q2
-% T_Test_Q2_Properties
 
 %% save computed decision variables (which are reused by python script)
 dec_var.Q1 = Q1;
