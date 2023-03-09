@@ -1,4 +1,6 @@
 # IQCbased_ImitationLearning
+This code is to accompany the paper [Imitation Learning with Stability and Safety Guarantees](https://arxiv.org/pdf/2012.09293.pdf). It learns a Neural Network controller with stability and safety guarantees through imitation learning process.
+
 The original code from the inverted pendulum example was generalised to allow for experimentation with an arbitrary number of hidden layers with arbitrary width. To this end, the scripts `NN_policy.py` and `solve_sdp.m` were modified. Some additional plotting scripts were also uploaded for comparing the ROA when using various neural network controllers. 
 
 ### Original Authors:
