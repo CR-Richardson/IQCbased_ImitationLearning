@@ -1,11 +1,14 @@
 # IQCbased_ImitationLearning
-This code is to accompany the paper [Imitation Learning with Stability and Safety Guarantees](https://arxiv.org/pdf/2012.09293.pdf). It learns a Neural Network controller with stability and safety guarantees through imitation learning process.
+The original code from the inverted pendulum example was generalised to allow for experimentation with an arbitrary number of hidden layers with arbitrary width. To this end, the scripts `NN_policy.py` and `solve_sdp.m` were modified. Some additional plotting scripts were also uploaded for comparing the ROA when using various neural network controllers. 
 
-### Authors:
+### Original Authors:
 * He Yin (he_yin at berkeley.edu)
 * Peter Seiler (pseiler at umich.edu)
 * Ming Jin (jinming at vt.edu)
 * Murat Arcak (arcak at berkeley.edu)
+
+### Author of modified code:
+* Carl R Richardson (cr2g16 at soton.ac.uk)
 
 ## Getting Started
 The code is written in Python3 and MATLAB.
@@ -21,9 +24,6 @@ To plot the computed ROA, two more packages are required:
 * [Multipoly](https://dept.aem.umn.edu/~AerospaceControl/): Package used to represent multivariate polynomials
 
 ### Way of Using the Code
-* To start the safe imitation learing process, go to each folder, run **NN_policy.py**. The computation results are stored in the folder **data**. 
-* To visualize the results for the inverted pendulum example, run **result_analysis.m**.
-For the GTM and vehicle lateral control examples, run **plot_generation.m**.
-
-## ROAs of the Learned NN Controllers and Explicit MPC Controller for the Vehicle Lateral Control Example 
-![vehicle](vehicle_explicit_MPC/veh_ROA.jpg)
+* To start the safe imitation learing process run `NN_policy.py`. The computation results are stored in the folder **data**. 
+* To visualize the results for the inverted pendulum example, run `result_analysis.m`.
+* To compare the results using two different neural network controllers, run `result_analysis_ROA.m`.
