@@ -6,7 +6,6 @@ function dec_var = solve_sdp(param)
 % convert struct to map and define system parameters
 param = containers.Map(fieldnames(param), struct2cell(param));
 
-QC_type = param('QC_type');
 AG = param('AG');
 BG = param('BG');
 nG = size(AG, 1);
