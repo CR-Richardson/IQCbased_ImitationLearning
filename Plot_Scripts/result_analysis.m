@@ -7,7 +7,7 @@ clear;
 
 % variables to specify - folder name and iteration number
 data_dir = 'PATH TO.../IQCbased_ImitationLearning-main/pendulum_explicit_MPC/data/';
-folder = 'NN_policy_depth=1_width=105/'; % Experiment
+folder = 'NN_policy_depth=1_width=10/'; % Experiment
 n_iter = 4; % Iteration number
 
 fname = [folder num2str(n_iter) '/sdpvar.mat'];
