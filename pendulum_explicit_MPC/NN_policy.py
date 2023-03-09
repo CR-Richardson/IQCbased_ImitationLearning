@@ -1,16 +1,25 @@
+# Modified: 09/03/23 - CRR - Modified code to allow arbitrary choice of NN depth and width.
+# Modified: 09/03/23 - CRR - Added train_split variable.
+
 import numpy as np
-# import tensorflow as tf
 import tensorflow.compat.v1 as tf
 tf.disable_v2_behavior()
 import pandas as pd
 import matplotlib.pyplot as plt
 import os
+import sys
 import time
 import inspect
 import pickle
-import matlab.engine
 import logz
 import scipy.linalg
+
+sys.path.append('C:\\Program Files\\MATLAB\\R2022a\\extern\\engines\\python\\')
+import matlab.engine
+
+######################################################################################
+######################################################################################
+######################################################################################
 
 # function for bulding up neural network
 def build_mlp(input_placeholder, output_size, scope, n_layers, size, activation, output_activation):
@@ -40,14 +49,13 @@ def build_mlp(input_placeholder, output_size, scope, n_layers, size, activation,
                                         units=size,
                                         activation=activation,
                                         kernel_initializer=tf.truncated_normal_initializer(stddev=0.1, dtype=tf.float32), 
-                                        # bias_initializer=tf.zeros_initializer()
                                         use_bias=False)
+
         for _ in range(n_layers - 1):
             hidden_layer = tf.layers.dense(inputs=hidden_layer,
                                             units=size,
                                             activation=activation,
                                             kernel_initializer=tf.truncated_normal_initializer(stddev=0.1, dtype=tf.float32),
-                                            # bias_initializer=tf.zeros_initializer()
                                             use_bias=False)
 
         # Output layer
@@ -55,7 +63,6 @@ def build_mlp(input_placeholder, output_size, scope, n_layers, size, activation,
                                             units = output_size,
                                             activation=output_activation,
                                             kernel_initializer=tf.truncated_normal_initializer(stddev=0.1, dtype=tf.float32), 
-                                            # bias_initializer=tf.zeros_initializer()
                                             use_bias=False)
         return output_placeholder
 
@@ -66,8 +73,7 @@ def unnormalize(x, mean, std):
     return x * std + mean
 
 def setup_logger(logdir, locals_):
-    # Configure output directory for logging
-    logz.configure_output_dir(logdir)
+    logz.configure_output_dir(logdir) # Configure output directory for logging
 
 def block_diagonal(matrices, dtype=tf.float32):
     """Constructs block-diagonal matrices from a list of batched 2D tensors.
@@ -116,7 +122,8 @@ def block_diagonal(matrices, dtype=tf.float32):
 #############################################################################
 # define the agent
 class Agent(object):
-    def __init__(self, ob_dim, ac_dim, n_layers, batch_size, activation, output_activation,sdp_var, iter, hyper_param, x1bound, x2bound):
+    def __init__(self, ob_dim, ac_dim, n_layers, batch_size, activation, output_activation, sdp_var, iter,
+                hyper_param, x1bound, x2bound):
         super(Agent, self).__init__()
         self.ob_dim = ob_dim
         self.ac_dim = ac_dim
@@ -131,75 +138,83 @@ class Agent(object):
         self.eta_NN = hyper_param["eta_NN"]
         self.x1bound = x1bound
         self.x2bound = x2bound
+        self.nphi = int(n_layers*hyper_param["size"])
 
     def init_variable(self):
-        # initialize the variables
         tf.get_default_session().run(tf.global_variables_initializer()) #pylint: disable=E1101
         self.saver = tf.train.Saver()
-        # for v in tf.global_variables():
-        #     if v.name == "nn_action/dense/kernel:0":
-        #         self.W1 = tf.transpose(v)
-        #         self.n1 = self.W1.shape[0]
-        #     if v.name == "nn_action/dense_1/kernel:0":
-        #         self.W2 = tf.transpose(v)
-        #         self.n2 = self.W2.shape[0]
-        #     if v.name == "nn_action/dense_2/kernel:0":
-        #         self.W3 = tf.transpose(v)
-        #         self.n3 = self.W3.shape[0]
 
     def fN_compute(self):
-        N = block_diagonal([self.W1, self.W2, self.W3])
-        Nvx = N[:self.n1+self.n2, :self.ob_dim]
-        Nvw = N[:self.n1+self.n2, self.ob_dim:]
-        Nux = N[self.n1+self.n2:, :self.ob_dim]
-        Nuw = N[self.n1+self.n2:, self.ob_dim:]
-        nphi = int(self.n1 + self.n2)
+        """Function which returns the f(N) matrix in the form f(N) = [fNux, fNuw; fNvx, fNvw].
+        See Yin et al: Imitation learning with stability guarantees."""
+
+        N = block_diagonal(self.W) # returns N = diag(W1, ..., Wn) = [Nvx, Nvw; Nux, Nuw]
+        Nvx = N[:self.nphi, :self.ob_dim]
+        Nvw = N[:self.nphi, self.ob_dim:]
+        Nux = N[self.nphi:, :self.ob_dim]
+        Nuw = N[self.nphi:, self.ob_dim:]
+
         Alpha = self.Alpha_compute()
-        Beta = tf.eye(nphi)
-        # intermediate = inv(eye(nphi) - Nvw*1/2*(Alpha+Beta))
-        intermediate = tf.linalg.inv(tf.eye(nphi) - 1/2*tf.linalg.matmul(Nvw,Alpha+Beta))
-        # fNvx = inv(eye(nphi) - Nvw*1/2*(Alpha+Beta))*Nvx;
+        Beta = tf.eye(self.nphi)
+        intermediate = tf.linalg.inv(tf.eye(self.nphi) - 1/2*tf.linalg.matmul(Nvw,Alpha+Beta))
         fNvx = tf.linalg.matmul(intermediate, Nvx)
-        # fNvw = inv(eye(nphi) - Nvw*1/2*(Alpha+Beta))*Nvw*1/2*(Beta-Alpha);
         fNvw = 1/2*tf.linalg.matmul(tf.linalg.matmul(intermediate, Nvw), Beta-Alpha)
-        # fNux = Nux + Nuw*1/2*(Alpha+Beta)*inv(eye(nphi)-Nvw*1/2*(Alpha+Beta))*Nvx;
         fNux = Nux + tf.linalg.matmul(1/2*tf.linalg.matmul(Nuw,Alpha+Beta), fNvx)
-        # fNuw = Nuw*1/2*(Beta-Alpha) + Nuw*1/2*(Alpha+Beta)*inv(eye(nphi)-Nvw*1/2*(Alpha+Beta))*Nvw*1/2*(Beta-Alpha);
         fNuw = 1/2*tf.linalg.matmul(Nuw, Beta-Alpha) + tf.linalg.matmul(1/2*tf.linalg.matmul(Nuw, Alpha+Beta), fNvw)
-        # fN = [fNux, fNuw;...
-        #       fNvx, fNvw];
+        # fN = [fNux, fNuw; fNvx, fNvw];
         fN = tf.concat([tf.concat([fNux, fNvx], 0), tf.concat([fNuw, fNvw], 0)], 1)
         return fN
 
     def Alpha_compute(self):
-        w0up = tf.constant([[self.x1bound], [self.x2bound]])
-        w0lb = -w0up
-        v1up_list = []
-        v1lb_list = []
-        for i in range(self.n1):
-            W1i = tf.reshape(self.W1[i,:], [1, self.ob_dim])
-            v1up_list.append(1/2*tf.linalg.matmul(W1i, w0up+w0lb) + 1/2*tf.linalg.matmul(tf.math.abs(W1i), w0up-w0lb))
-            v1lb_list.append(1/2*tf.linalg.matmul(W1i, w0up+w0lb) - 1/2*tf.linalg.matmul(tf.math.abs(W1i), w0up-w0lb))
-        v1up = tf.reshape(tf.stack(v1up_list), [self.n1, 1])
-        v1lb = tf.reshape(tf.stack(v1lb_list), [self.n1, 1])
-        w1up = tf.math.tanh(v1up)
-        w1lb = tf.math.tanh(v1lb)
-        alpha1 = tf.math.minimum(tf.math.divide(w1up, v1up), tf.math.divide(w1lb, v1lb))
-        alpha1 = tf.reshape(alpha1, [self.n1, ])
-        v2up_list = []
-        v2lb_list = []
-        for i in range(self.n2):
-            W2i = tf.reshape(self.W2[i,:], [1, self.n1])
-            v2up_list.append(1/2*tf.linalg.matmul(W2i, w1up+w1lb) + 1/2*tf.linalg.matmul(tf.math.abs(W2i), w1up-w1lb))
-            v2lb_list.append(1/2*tf.linalg.matmul(W2i, w1up+w1lb) - 1/2*tf.linalg.matmul(tf.math.abs(W2i), w1up-w1lb))
-        v2up = tf.reshape(tf.stack(v2up_list), [self.n2, ])
-        v2lb = tf.reshape(tf.stack(v2lb_list), [self.n2, ])
-        w2up = tf.math.tanh(v2up)
-        w2lb = tf.math.tanh(v2lb)
-        alpha2 = tf.math.minimum(tf.math.divide(w2up, v2up), tf.math.divide(w2lb, v2lb))
-        Alpha1 = tf.matrix_diag(alpha1)
-        Alpha2 = tf.matrix_diag(alpha2)
-        Alpha = block_diagonal([Alpha1, Alpha2])
+        """Function for computing the lower bound on the output of the activation functions.
+        See [1] Yin et al: stability analysis using QC for systems with NN controllers
+        and [2] Gowal et al: Effectiveness of interval bound propagation ..."""
+
+        # Equilibrium points of the closed loop system - from (5) and (12) in [1]
+        # All eq. points of NN are zero if bias' are all zero. Hence v_eq and w_eq are left empty for now.
+        x_eq = [0.0, 0.0]
+        v_eq = [] # activation function inputs
+        w_eq = [] # activation function outputs
+
+        x_ub = tf.constant([[self.x1bound], [self.x2bound]])
+        x_lb = -x_ub
+
+        # arrays to store the propagated upper and lower bounds of the NN activation functions
+        # input and output
+        v_lb = []
+        v_ub = []
+        w_lb = []
+        w_ub = []
+
+        # propagating the bounds through the NN
+        mu = 0.5*(x_ub + x_lb)
+        r = 0.5*(x_ub - x_lb)
+        mu = tf.linalg.matmul(self.W[0], mu)
+        r = tf.linalg.matmul(tf.math.abs(self.W[0]), r)
+        v_lb.append(mu - r)
+        v_ub.append(mu + r)
+        w_lb.append(self.activation(v_lb[0]))
+        w_ub.append(self.activation(v_ub[0]))
+
+        for j in range(1,len(self.W)):
+            mu = 0.5*(w_ub[j-1] + w_lb[j-1])
+            r = 0.5*(w_ub[j-1] - w_lb[j-1])
+            mu = tf.linalg.matmul(self.W[j], mu)
+            r = tf.linalg.matmul(tf.math.abs(self.W[j]), r)
+            v_lb.append(mu - r)
+            v_ub.append(mu + r)
+            if j < len(self.W)-1: # no activation function on the output layer
+                w_lb.append(self.activation(v_lb[j]))
+                w_ub.append(self.activation(v_ub[j]))
+
+        alpha = []
+        for j in range(len(self.W)-1): # output layer has no activation function
+            a = tf.math.minimum(tf.math.divide(w_ub[j], v_ub[j]), tf.math.divide(w_lb[j], v_lb[j]))
+            a = tf.reshape(a, [self.n[j], ])
+            a = tf.matrix_diag(a)
+            alpha.append(a)
+        
+        Alpha = block_diagonal(alpha)
         return Alpha
 
     def save_variables(self, logdir):
@@ -252,24 +267,26 @@ class Agent(object):
                                 size=self.size,
                                 activation=self.activation,
                                 output_activation=self.output_activation)
+
+        
         # initialize the weights in the NN
         tf.get_default_session().run(tf.global_variables_initializer()) #pylint: disable=E1101
+        self.W = []
+        self.n = []
         for v in tf.global_variables():
             if v.name == "nn_action/dense/kernel:0":
-                # self.W1 = tf.transpose(tf.convert_to_tensor(v))
-                self.W1 = tf.transpose(v)
-                self.n1 = self.W1.shape[0]
-            if v.name == "nn_action/dense_1/kernel:0":
-                # self.W2 = tf.transpose(tf.convert_to_tensor(v))
-                self.W2 = tf.transpose(v)
-                self.n2 = self.W2.shape[0]
-            if v.name == "nn_action/dense_2/kernel:0":
-                # self.W3 = tf.transpose(tf.convert_to_tensor(v))
-                self.W3 = tf.transpose(v)
-                self.n3 = self.W3.shape[0]
+                self.W.append(tf.transpose(v))
+                self.n.append(self.W[0].shape[0])
+
+            for j in range(1,self.n_layers+1):    
+                if v.name == "nn_action/dense_{}/kernel:0".format(j):
+                    self.W.append(tf.transpose(v))
+                    self.n.append(self.W[j].shape[0])
+        
         self.ac_data = tf.placeholder(shape=[None, self.ac_dim], name="ac_true", dtype=tf.float32)
         if self.iter == 0: # nominal imitation learning
             self.loss = tf.losses.mean_squared_error(self.ac_data, self.ac_prediction)
+            self.mse = self.loss
         else: # safe imitation learning
             self.Q1 = np.array(self.sdp_var["Q1"],dtype='float32')
             self.Q2 = np.array(self.sdp_var["Q2"],dtype='float32')
@@ -280,8 +297,12 @@ class Agent(object):
             self.Yk = np.array(self.sdp_var["Yk"],dtype='float32')
             Q = scipy.linalg.block_diag(self.Q1, self.Q2)
             L = np.block([[self.L1, self.L2], [self.L3, self.L4]])
+            
             self.fN = self.fN_compute()
-            self.loss = self.eta_NN*tf.losses.mean_squared_error(self.ac_data, self.ac_prediction) + tf.linalg.trace(tf.matmul(np.transpose(self.Yk), tf.matmul(self.fN, Q)-L)) + self.rho/2*tf.math.square(tf.norm(tf.matmul(self.fN, Q)-L, 'fro', (0, 1)))
+
+            self.mse = tf.losses.mean_squared_error(self.ac_data, self.ac_prediction)
+            self.loss = self.eta_NN*tf.losses.mean_squared_error(self.ac_data, self.ac_prediction) + tf.linalg.trace(tf.matmul(np.transpose(self.Yk), tf.matmul(self.fN, Q)-L)) + 0.5*self.rho*tf.math.square(tf.norm(tf.matmul(self.fN, Q)-L, 'fro', (0, 1)))
+           
         self.update_op = tf.train.AdamOptimizer(self.learning_rate_ph).minimize(self.loss)
 
     def update_NN(self, ob_no, ac_na, learning_rate):
@@ -293,14 +314,17 @@ class Agent(object):
 
     def compute_loss(self, ob_no, ac_na):
         temp_loss = tf.get_default_session().run([self.loss], feed_dict={self.sy_ob_no: ob_no, self.ac_data: ac_na})
-        return temp_loss
+        temp_mse = tf.get_default_session().run([self.mse], feed_dict={self.sy_ob_no: ob_no, self.ac_data: ac_na})
+        return temp_loss, temp_mse
 
 # solve the NN training problem using SGD
-def solve_NNfit(ob_dim, ac_dim, n_layers, batch_size, activation,output_activation, data, n_epoch, sdp_var, iter, hyper_param, logdir, x1bound, x2bound):
+def solve_NNfit(ob_dim, ac_dim, n_layers, batch_size, activation, output_activation, xu_data, train_split, 
+                n_epoch, sdp_var, iter, hyper_param, logdir, x1bound, x2bound):
     # setup logger
     setup_logger(logdir, locals())
 
-    agent = Agent(ob_dim, ac_dim, n_layers, batch_size, activation, output_activation,sdp_var, iter, hyper_param, x1bound, x2bound)
+    agent = Agent(ob_dim, ac_dim, n_layers, batch_size, activation, output_activation, 
+    sdp_var, iter, hyper_param, x1bound, x2bound)
 
     # tensorflow: config, session initialization
     tf_config = tf.ConfigProto(inter_op_parallelism_threads = 1, intra_op_parallelism_threads = 1)
@@ -312,58 +336,67 @@ def solve_NNfit(ob_dim, ac_dim, n_layers, batch_size, activation,output_activati
 
         # tensorflow: variable initialization
         agent.init_variable()
-        xu_data = data
 
-        x_train = xu_data[:7400,:2]
-        x_test = xu_data[7400:,:2]
-        u_train = xu_data[:7400,2:]
-        u_test = xu_data[7400:,2:]
-
-        # number of points
-        num_train_pt = x_train.shape[0]
+        # number of data points
+        n_train_samples = int(len(xu_data[:,0])*train_split)
+        x_train = xu_data[:n_train_samples,:2]
+        u_train = xu_data[:n_train_samples,2:]
+        x_test = xu_data[n_train_samples:,:2]
+        u_test = xu_data[n_train_samples:,2:]
 
         train_loss_list = []
         test_loss_list = []
-
         for epoch in range(n_epoch):
-            rand_index = np.random.choice(num_train_pt, size=batch_size)
+            rand_index = np.random.choice(n_train_samples, size=batch_size) # random data samples
             x_batch = x_train[rand_index, :]
             u_batch = u_train[rand_index, :]
 
             learning_rate = 1e-3/(1 + 3*epoch/n_epoch)
             agent.update_NN(x_batch, u_batch, learning_rate)
-            train_loss = agent.compute_loss(x_batch, u_batch)
-            test_loss = agent.compute_loss(x_test, u_test)
+            train_loss, train_mse = agent.compute_loss(x_batch, u_batch)
+            test_loss, test_mse = agent.compute_loss(x_test, u_test)
+            train_loss_list.append(train_loss)
+            test_loss_list.append(test_loss)
 
-            if epoch%4000 == 0:
+            if epoch%(n_epoch/10) == 0:
                 print("********** Iteration %i ************"%epoch)
-                print('Trainting Loss = ', train_loss)
+                print('Training Loss = ', train_loss)
                 print('Test Loss = ', test_loss)
             train_loss_list.append(train_loss)
             test_loss_list.append(test_loss)
-            # if epoch%10000 == 0:
-            #     agent.save_variables(logdir)
+        
         agent.save_variables(logdir)
         logz.pickle_tf_vars()
         logz.save_params(hyper_param)
+
         if True:
             train_curve, = plt.plot(train_loss_list, 'r--', label='training Loss')
             test_curve, = plt.plot(test_loss_list, 'k--', label='test Loss')
             plt.legend(handles = [train_curve, test_curve])
-            # plt.yscale('log')
             plt.xlabel('number of iterations')
             plt.ylabel('mean squared error')
             plt.title('NN policy training curve')
             plt.savefig(os.path.join(logdir, 'loss_vs_epoch'))
-        W1 = agent.W1.eval()
-        W2 = agent.W2.eval()
-        W3 = agent.W3.eval()
+        
+        W = []
+        for j in range(len(agent.W)):
+            W.append(agent.W[j].eval())
+
     sess.close()
     tf.reset_default_graph()
-    # return [agent.W1.eval(), agent.W2.eval(), agent.W3.eval()]
-    return [W1, W2, W3]
+    
+    return W, train_mse, test_mse
 
 def main():
+
+    size = 10 # size of each hidden layer
+    n_layers = 5 # number of hidden layers
+    n_iter = 3 #17 # number of iterations of safe imitation learning
+    n_epoch = 100 #40000 # number of epochs for training the NN controller
+    rho = 1
+    eta_ROA = 5
+    eta_NN = 100
+
     print(logz.colorize("Safe imitation learning begins", 'red', bold=True))
     data_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data')
     if not (os.path.exists(data_path)):
@@ -376,22 +409,18 @@ def main():
     eng = matlab.engine.start_matlab()
     ob_dim = 2
     ac_dim = 1
-    size = 10 # size of each hidden layer
-    n_layers = 2 # number of hidden layers
-    batch_size = 500
-    n_epoch = 40000 # number of epochs for training the NN controller
-    rho = 1
-    eta_ROA = 5
-    eta_NN = 100
     hyper_param = {"rho": rho, "eta_ROA": eta_ROA, "eta_NN": eta_NN, "size": size}
     activation = tf.nn.tanh
     output_activation = None
     x1bound = 2.5
     x2bound = 6.0
+    x_eq = [[0.0], [0.0]]
 
     # load (x, u) data pairs
     exp_data = pd.read_csv('exp_data2.csv', sep = ',')
     data = np.array(exp_data.values)
+    batch_size = 500
+    train_split = 0.9
 
     # construct the dynamics for the pendulum
     g = 10 # gravitational coefficient
@@ -402,29 +431,42 @@ def main():
     AG = np.array([[1, dt], [g/l*dt, 1-mu/(m*l**2)*dt]])
     BG = np.array([[0], [dt/(m*l**2)]])
     nG = AG.shape[0]
+
     # initialize sdp_var
     sdp_var = {"Q1": np.zeros((nG,nG))}
-    n_iter = 17 # number of iterations of safe imitation learning
     param = {}
+    param["logdir"] = logdir
     param["AG"] = matlab.double(AG.tolist())
     param["BG"] = matlab.double(BG.tolist())
     param["rho"] = matlab.double([rho])
     param["eta_ROA"] = matlab.double([eta_ROA])
+    param["eta_NN"] = matlab.double([eta_NN])
     param["x1bound"] = matlab.double([x1bound])
     param["x2bound"] = matlab.double([x2bound])
+    param["x_eq"] = matlab.double(x_eq)
+    param["n_iter"] = matlab.int32(n_iter)
+    param["QC_type"] = "CSB" # The type of QC used. Must be 'RA' or 'CSB'
 
     for i in range(n_iter):
         print(logz.colorize("safe learning iteration" + str(i), 'green', bold=True))
+        
         # NN trainig step
-        W1, W2, W3 = solve_NNfit(ob_dim, ac_dim, n_layers, batch_size, activation,output_activation, data, n_epoch, sdp_var, i, hyper_param, os.path.join(logdir,'%d'%i),x1bound, x2bound)
-        param["W1"] = matlab.double(W1.tolist())
-        param["W2"] = matlab.double(W2.tolist())
-        param["W3"] = matlab.double(W3.tolist())
+        W, train_mse, test_mse = solve_NNfit(ob_dim, ac_dim, n_layers, batch_size, activation, output_activation,
+        data, train_split, n_epoch,  sdp_var, i, hyper_param, os.path.join(logdir,'%d'%i),x1bound, x2bound)
+
+        param["train_mse"] = matlab.double(float(train_mse[0])) # pass to matlab so all objective values can be stored after each iteration
+        param["test_mse"] = matlab.double(float(test_mse[0]))
         param["iter"] = matlab.int64([i])
         param["path"] = os.path.join(logdir,'%d'%i)
+
+        for j in range(len(W)):
+            param['W{}'.format(j+1)] = matlab.double(W[j].tolist())
+
         # sdp step and Yk update step
+        print("STARTING SDP")
         sdp_var = eng.solve_sdp(param)
         param["Yk"] = sdp_var["Yk"]
+        print("FINISHING SDP")
 
 if __name__ == "__main__":
     main()
